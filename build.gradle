@@ -48,8 +48,8 @@ dependencies {
     compile 'commons-codec:commons-codec:1.15'
     compile 'commons-cli:commons-cli:1.4'
     compile 'de.flapdoodle.embed:de.flapdoodle.embed.process:3.0.1'
-    compile 'org.apache.zookeeper:zookeeper:3.5.8'
-    compile 'org.apache.kafka:kafka_2.12:2.5.1'
+    compile 'org.apache.zookeeper:zookeeper:3.5.7'
+    compile 'org.apache.kafka:kafka_2.11:2.4.1'
 
     testCompile 'junit:junit:4.13'
 
