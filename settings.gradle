@@ -8,8 +8,3 @@
  */
 
 rootProject.name = 'kafkita'
-
-if (!rootProject.hasProperty('builderName'))
-    rootProject.getProperties()['builderName'] = InetAddress.getLocalHost().getCanonicalHostName()
-
-include('lib')
