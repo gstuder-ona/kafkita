@@ -238,6 +238,9 @@ public class Kafkita {
       this.dataDir = new File(dir, "data");
       this.portFile = portFile;
       this.portRange = portRange;
+
+      this.addlJvmProps.put("Xms128m", "");
+      this.addlJvmProps.put("Xmx128m", "");
     }
 
     @Override
@@ -318,6 +321,9 @@ public class Kafkita {
       this.portRange = portRange;
       this.portFile = portFile;
       this.zkService = zkService;
+
+      this.addlJvmProps.put("Xms512m", "");
+      this.addlJvmProps.put("Xmx512m", "");
     }
 
     public Properties getAddlProps() {
@@ -566,9 +572,9 @@ public class Kafkita {
     LOG.info(String.format("Kafkita services stopped: id=%s", id));
   }
 
-  public static String toPropListStr(Properties props) {
+  public static String toPropListStr(Properties props) throws IOException {
     StringWriter writer = new StringWriter();
-    props.list(new PrintWriter(writer));
+    props.store(new PrintWriter(writer), null);
     return writer.getBuffer().toString();
   }
 
@@ -578,7 +584,11 @@ public class Kafkita {
     return props
         .entrySet()
         .stream()
-        .map(e -> String.format("-D%s=%s", e.getKey(), e.getValue()))
+        .map(
+            e ->
+                (!((String) e.getKey()).startsWith("X"))
+                    ? String.format("-D%s=%s", e.getKey(), e.getValue())
+                    : String.format("-%s", e.getKey()))
         .collect(Collectors.toList())
         .toArray(new String[] {});
   }
@@ -680,15 +690,18 @@ public class Kafkita {
 
     final Kafkita kafkita = run(args);
 
-    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-      try {
-        LOG.warn(String.format("JVM terminated, Kafkita stopping: id=%s", kafkita.getId()));
-        kafkita.waitForStop();
-      }
-      catch (InterruptedException ex) {
-        LOG.warn(String.format("Kafkita shutdown interrupted: id=%s", kafkita.getId()));
-      }
-    }));
+    Runtime.getRuntime()
+        .addShutdownHook(
+            new Thread(
+                () -> {
+                  try {
+                    LOG.warn(
+                        String.format("JVM terminated, Kafkita stopping: id=%s", kafkita.getId()));
+                    kafkita.waitForStop();
+                  } catch (InterruptedException ex) {
+                    LOG.warn(String.format("Kafkita shutdown interrupted: id=%s", kafkita.getId()));
+                  }
+                }));
 
     while (true) {
       Thread.sleep(1000);

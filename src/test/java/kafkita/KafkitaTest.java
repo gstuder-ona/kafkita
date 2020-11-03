@@ -4,9 +4,6 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Properties;
-
-import kafka.admin.TopicCommand;
-import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -14,7 +11,6 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.Assert;
@@ -75,8 +71,7 @@ public class KafkitaTest {
     KafkaProducer<String, String> producer = new KafkaProducer<>(pProps);
 
     for (int i = 0; i < 10; ++i) {
-      ProducerRecord<String, String> record =
-          new ProducerRecord<>("testIo", "some", "value");
+      ProducerRecord<String, String> record = new ProducerRecord<>("testIo", "some", "value");
       producer.send(record);
     }
     producer.flush();
