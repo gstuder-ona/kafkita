@@ -17,7 +17,6 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.text.StringSubstitutor;
 import org.apache.zookeeper.client.FourLetterWordMain;
-import org.apache.zookeeper.common.X509Exception;
 import org.apache.zookeeper.server.quorum.QuorumPeerMain;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -270,12 +269,8 @@ public class Kafkita {
     }
 
     public boolean isHealthy() throws IOException {
-      try {
-        FourLetterWordMain.send4LetterWord("localhost", this.port, "srvr");
-        return true;
-      } catch (X509Exception.SSLContextException ex) {
-        throw new IOException(ex);
-      }
+      FourLetterWordMain.send4LetterWord("localhost", this.port, "srvr");
+      return true;
     }
 
     @Override
