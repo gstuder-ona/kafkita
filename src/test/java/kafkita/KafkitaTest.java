@@ -29,8 +29,13 @@ public class KafkitaTest {
     Assert.assertNotNull(kafkita);
     kafkita.waitForStart();
 
-    Assert.assertEquals(true, kafkita.getService().process.isAlive());
-    Assert.assertEquals(true, kafkita.getZkService().process.isAlive());
+    Assert.assertEquals(true, kafkita.getService().getProcess().isAlive());
+    Assert.assertEquals(true, kafkita.getZkService().getProcess().isAlive());
+
+    Assert.assertTrue(
+        kafkita.getZkService().getBuiltProcess().builder.command().contains("-Xmx64m"));
+    Assert.assertTrue(
+        kafkita.getService().getBuiltProcess().builder.command().contains("-Xmx192m"));
   }
 
   @Test
@@ -97,5 +102,21 @@ public class KafkitaTest {
 
     producer.close();
     consumer.close();
+  }
+
+  @Test
+  public void testSmallMemLimits() throws Exception {
+
+    Kafkita kafkita = kafkitaRule.kafkita;
+    kafkita.getAddlZkJvmProperties().put("Xmx32m", "");
+    kafkita.getAddlJvmProperties().put("Xmx64m", "");
+    kafkita.waitForStart();
+
+    Assert.assertEquals(true, kafkita.getService().getProcess().isAlive());
+    Assert.assertEquals(true, kafkita.getZkService().getProcess().isAlive());
+
+    Assert.assertTrue(
+        kafkita.getZkService().getBuiltProcess().builder.command().contains("-Xmx32m"));
+    Assert.assertTrue(kafkita.getService().getBuiltProcess().builder.command().contains("-Xmx64m"));
   }
 }
