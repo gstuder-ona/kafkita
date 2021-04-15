@@ -10,12 +10,14 @@ import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 import kafka.Kafka;
+import kafka.admin.AdminClient;
 import kafka.admin.BrokerApiVersionsCommand;
 import org.apache.commons.cli.*;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.text.StringSubstitutor;
+import org.apache.kafka.common.utils.Utils;
 import org.apache.zookeeper.client.FourLetterWordMain;
 import org.apache.zookeeper.server.quorum.QuorumPeerMain;
 import org.slf4j.Logger;
@@ -26,9 +28,6 @@ public class Kafkita {
   private static final Logger LOG = LoggerFactory.getLogger(Kafkita.class);
 
   public static final String DEFAULT_STACK_DIR = ".kafkita";
-
-  public static Map<String, ZkService> zkServices = new HashMap<>();
-  public static Map<String, KafkaService> kafkaServices = new HashMap<>();
 
   public static final int[] DEFAULT_ZK_PORT_RANGE = new int[] {12100, 12200};
   public static final int[] DEFAULT_KAFKA_PORT_RANGE = new int[] {19000, 19100};
@@ -49,7 +48,22 @@ public class Kafkita {
     public final File logFile;
     public HealthThresholds healthThresholds;
 
-    public Process process = null;
+    // JDK 9 gives us this, we're in JDK 8
+    public static class BuiltProcess {
+      public final ProcessBuilder builder;
+      public final Process process;
+
+      protected BuiltProcess(ProcessBuilder builder, Process process) {
+        this.builder = builder;
+        this.process = process;
+      }
+
+      public static BuiltProcess start(ProcessBuilder builder) throws IOException {
+        return new BuiltProcess(builder, builder.start());
+      }
+    }
+
+    public BuiltProcess builtProcess = null;
 
     public Service(
         String id, File dir, File pidFile, File logFile, HealthThresholds healthThresholds) {
@@ -73,11 +87,11 @@ public class Kafkita {
 
       for (int i = 0; ; ++i) {
 
-        this.process = null;
+        this.builtProcess = null;
         try {
 
-          this.process = tryStart();
-          if (this.process == null)
+          this.builtProcess = tryStart();
+          if (this.builtProcess == null)
             throw new IOException(String.format("No process was started: id=%s", id));
 
           if (!waitUntilHealthy()) {
@@ -115,7 +129,7 @@ public class Kafkita {
       return false;
     }
 
-    public abstract Process tryStart() throws IOException;
+    public abstract BuiltProcess tryStart() throws IOException;
 
     public boolean waitUntilHealthy() throws InterruptedException {
 
@@ -125,7 +139,7 @@ public class Kafkita {
 
       for (int i = 0; ; ++i) {
 
-        if (!process.isAlive()) {
+        if (!builtProcess.process.isAlive()) {
           LOG.info(String.format("Service died during health checks: id=%s", id));
           return false;
         }
@@ -159,9 +173,17 @@ public class Kafkita {
     public abstract boolean isHealthy() throws IOException;
 
     public void writePidFile() throws IOException {
-      Long pid = Processes.processId(process);
+      Long pid = Processes.processId(builtProcess.process);
       FileUtils.writeStringToFile(
           pidFile, pid != null ? pid.toString() : "", StandardCharsets.UTF_8);
+    }
+
+    public Process getProcess() {
+      return builtProcess.process;
+    }
+
+    public BuiltProcess getBuiltProcess() {
+      return builtProcess;
     }
 
     public void removePidFile() {
@@ -177,16 +199,16 @@ public class Kafkita {
 
       try {
 
-        if (!process.isAlive()) return process.exitValue();
+        if (!builtProcess.process.isAlive()) return builtProcess.process.exitValue();
 
         LOG.info(String.format("Waiting for exit: id=%s", id));
 
         Instant startWait = null;
-        process.destroy();
+        builtProcess.process.destroy();
 
         while (true) {
 
-          if (!process.isAlive()) return process.exitValue();
+          if (!builtProcess.process.isAlive()) return builtProcess.process.exitValue();
 
           if (startWait == null) {
             startWait = Instant.now();
@@ -199,13 +221,13 @@ public class Kafkita {
 
         LOG.info(String.format("Forced exit: id=%s", id));
 
-        return process.destroyForcibly().waitFor();
+        return builtProcess.process.destroyForcibly().waitFor();
 
       } finally {
 
         LOG.info(String.format("Stopped service: id=%s", id));
 
-        this.process = null;
+        this.builtProcess = null;
       }
     }
   }
@@ -237,13 +259,18 @@ public class Kafkita {
       this.dataDir = new File(dir, "data");
       this.portFile = portFile;
       this.portRange = portRange;
+    }
 
-      this.addlJvmProps.put("Xms128m", "");
-      this.addlJvmProps.put("Xmx128m", "");
+    public Properties getAddlProps() {
+      return addlProps;
+    }
+
+    public Properties getAddlJvmProps() {
+      return addlJvmProps;
     }
 
     @Override
-    public Process tryStart() throws IOException {
+    public BuiltProcess tryStart() throws IOException {
 
       this.dir.mkdirs();
       this.dataDir.mkdirs();
@@ -262,7 +289,7 @@ public class Kafkita {
           propsList + "\n\n#\n# Additional Props\n#\n\n" + addlPropsList,
           StandardCharsets.UTF_8);
 
-      jvmArgs = ArrayUtils.addAll(toLog4jJvmArgs(logFile), toJvmArgs(jvmPropsList));
+      jvmArgs = ArrayUtils.addAll(toLog4jJvmArgs(logFile), toJvmArgs(jvmPropsList, "64m"));
       args = new String[] {QuorumPeerMain.class.getCanonicalName(), propFile.getAbsolutePath()};
 
       return execJavaProcess(WatchfulSubprocess.class, Arrays.asList(jvmArgs), Arrays.asList(args));
@@ -316,9 +343,6 @@ public class Kafkita {
       this.portRange = portRange;
       this.portFile = portFile;
       this.zkService = zkService;
-
-      this.addlJvmProps.put("Xms512m", "");
-      this.addlJvmProps.put("Xmx512m", "");
     }
 
     public Properties getAddlProps() {
@@ -330,7 +354,7 @@ public class Kafkita {
     }
 
     @Override
-    public Process tryStart() throws IOException {
+    public BuiltProcess tryStart() throws IOException {
 
       this.dir.mkdirs();
       this.logDir.mkdirs();
@@ -342,27 +366,59 @@ public class Kafkita {
       kafkaMap.put("kafkita.kafka.port", "" + this.port);
       kafkaMap.put("kafkita.kafka.logDir", this.logDir.getAbsolutePath());
 
+      // Setup some default buffering values based on the message size
+      long messageMaxBytes =
+          Long.parseLong(
+              (String) getAddlProps().getOrDefault("message.max.bytes", "" + (1024 * 1024)));
+
+      long messageBufferBytes =
+          Long.parseLong(
+              (String)
+                  getAddlProps().getOrDefault("message.buffer.bytes", "" + (messageMaxBytes * 10)));
+
+      long logSegmentBytes =
+          Long.parseLong(
+              (String)
+                  getAddlProps().getOrDefault("log.segment.bytes", "" + (messageMaxBytes * 10)));
+
+      kafkaMap.put("kafkita.kafka.message.max.bytes", "" + messageMaxBytes);
+      kafkaMap.put("kafkita.kafka.message.buffer.bytes", "" + messageBufferBytes);
+      kafkaMap.put("kafkita.kafka.log.segment.bytes", "" + logSegmentBytes);
+
       String propsList =
           renderTemplate(readResourceAsString("kafka.template.properties"), kafkaMap);
       String addlPropsList = renderTemplate(toPropListStr(getAddlProps()), kafkaMap);
+
       String jvmPropsList = renderTemplate(toPropListStr(getAddlJvmProps()), kafkaMap);
       FileUtils.writeStringToFile(
           propFile,
           propsList + "\n\n#\n# Additional Props\n#\n\n" + addlPropsList,
           StandardCharsets.UTF_8);
 
-      jvmArgs = ArrayUtils.addAll(toLog4jJvmArgs(logFile), toJvmArgs(jvmPropsList));
+      jvmArgs = ArrayUtils.addAll(toLog4jJvmArgs(logFile), toJvmArgs(jvmPropsList, "192m"));
       args = new String[] {Kafka.class.getCanonicalName(), propFile.getAbsolutePath()};
 
       return execJavaProcess(WatchfulSubprocess.class, Arrays.asList(jvmArgs), Arrays.asList(args));
     }
 
     public boolean isHealthy() throws IOException {
+
+      AdminClient adminClient = null;
       try {
-        BrokerApiVersionsCommand.main(
-            new String[] {"--bootstrap-server", "localhost:" + this.port});
+        BrokerApiVersionsCommand.BrokerVersionCommandOptions opts =
+            new BrokerApiVersionsCommand.BrokerVersionCommandOptions(
+                new String[] {"--bootstrap-server", "localhost:" + this.port});
+        Properties props =
+            opts.options().has(opts.commandConfigOpt())
+                ? Utils.loadProps((String) opts.options().valueOf(opts.commandConfigOpt()))
+                : new Properties();
+        props.put("bootstrap.servers", opts.options().valueOf(opts.bootstrapServerOpt()));
+        adminClient = kafka.admin.AdminClient$.MODULE$.create(props);
+        adminClient.awaitBrokers();
       } catch (Exception ex) {
         throw new IOException(ex);
+      } finally {
+        if (adminClient != null) adminClient.close();
       }
       return true;
     }
@@ -573,9 +629,22 @@ public class Kafkita {
     return writer.getBuffer().toString();
   }
 
-  public static String[] toJvmArgs(String propListStr) throws IOException {
+  public static String[] toJvmArgs(String propListStr, String defaultMemMax) throws IOException {
     Properties props = new Properties();
     props.load(new StringReader(propListStr));
+
+    boolean hasMemMax = false;
+    for (Map.Entry entry : props.entrySet()) {
+      if (entry.getKey().toString().startsWith("Xmx")) {
+        hasMemMax = true;
+        break;
+      }
+    }
+
+    if (!hasMemMax && defaultMemMax != null) {
+      props.put("Xmx" + defaultMemMax, "");
+    }
+
     return props
         .entrySet()
         .stream()
@@ -595,8 +664,8 @@ public class Kafkita {
     };
   }
 
-  public static Process execJavaProcess(Class clazz, List<String> jvmArgs, List<String> args)
-      throws IOException {
+  public static Service.BuiltProcess execJavaProcess(
+      Class clazz, List<String> jvmArgs, List<String> args) throws IOException {
 
     String javaHome = System.getProperty("java.home");
     String javaBin = javaHome + File.separator + "bin" + File.separator + "java";
@@ -617,9 +686,9 @@ public class Kafkita {
         String.format(
             "Starting process: %s", builder.command().stream().collect(Collectors.joining(" "))));
 
-    Process process = builder.start();
-    Runtime.getRuntime().addShutdownHook(new Thread(process::destroy));
-    return process;
+    Service.BuiltProcess builtProcess = Service.BuiltProcess.start(builder);
+    Runtime.getRuntime().addShutdownHook(new Thread(builtProcess.process::destroy));
+    return builtProcess;
   }
 
   public static String readResourceAsString(String resourcePath) {
